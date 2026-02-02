@@ -17,6 +17,7 @@ def transform_price(input_path, output_path):
     
     max_row = ws.max_row
     
+    # Сохраняем цены из столбцов M(13), O(15), Q(17), S(19) ДО удаления
     price_data = {}
     for row in range(1, max_row + 1):
         prices = []
@@ -40,19 +41,27 @@ def transform_price(input_path, output_path):
         if prices:
             price_data[row] = "\n".join(prices)
     
-    cols_to_delete = [21, 20, 19, 18, 17, 16, 15, 14, 9, 8]
+    # Удаляем столбцы справа налево (НЕ трогаем столбец 3 с фото!)
+    # Удаляем: 21,20,19,18,17,16,15,14,13,12,9,8
+    # Оставляем: 1,2,3(фото),4,5,6,7,10,11(Штук в блоке)
+    cols_to_delete = [21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 9, 8]
     
     for col in sorted(cols_to_delete, reverse=True):
         ws.delete_cols(col)
     
-    price_col = 11
+    # После удаления 12 столбцов:
+    # Столбец 10 стал 8, столбец 11 (Штук в блоке) стал 9
+    # Добавляем цены в столбец 10
+    price_col = 10
     
     for row, combined_price in price_data.items():
         cell = ws.cell(row=row, column=price_col)
         cell.value = combined_price
         cell.alignment = Alignment(wrap_text=True, vertical='top')
     
-    ws.column_dimensions['K'].width = 20
+    ws.column_dimensions['J'].width = 20
+    
+    # Удаляем первые 2 строки
     ws.delete_rows(1, 2)
     
     wb.save(output_path)
@@ -62,7 +71,7 @@ def transform_price(input_path, output_path):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 Привет! Отправь мне Excel файл с прайсом.\n\n"
-        "Я удалю лишние столбцы и объединю цены в один столбец."
+        "Я удалю лишние столбцы и объединю цены."
     )
 
 
