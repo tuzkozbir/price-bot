@@ -1,13 +1,10 @@
 import os
 import logging
-import io
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Font
 from openpyxl.cell.cell import MergedCell
-from openpyxl.drawing.image import Image as XLImage
-from PIL import Image
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 
@@ -71,29 +68,15 @@ def transform_price(input_path, output_path):
     for merged_range in merged_ranges:
         ws.unmerge_cells(str(merged_range))
     
-    # Извлекаем и уменьшаем изображения
-    new_images = []
+    # Перемещаем изображения из столбца C в A
+    images_to_keep = []
     for img in ws._images:
         if hasattr(img.anchor, '_from'):
             anchor = img.anchor._from
             if anchor.col == 2:
-                row_num = anchor.row
-                try:
-                    img_data = img._data()
-                    pil_img = Image.open(io.BytesIO(img_data))
-                    pil_img.thumbnail((70, 70), Image.LANCZOS)
-                    
-                    buf = io.BytesIO()
-                    pil_img.save(buf, format='PNG')
-                    buf.seek(0)
-                    
-                    new_img = XLImage(buf)
-                    new_img.anchor = f'A{row_num + 1}'
-                    new_images.append((row_num, new_img))
-                except:
-                    pass
-    
-    ws._images = []
+                anchor.col = 0
+                images_to_keep.append(img)
+    ws._images = images_to_keep
     
     # Удаляем столбцы
     cols_to_delete = [29, 28, 27, 26, 25, 24, 21, 20, 19, 18, 17, 16, 15, 14, 13, 10, 9, 8, 4, 3, 2]
@@ -109,7 +92,7 @@ def transform_price(input_path, output_path):
             cell.font = Font(size=12)
     
     # Ширины столбцов
-    ws.column_dimensions['A'].width = 10
+    ws.column_dimensions['A'].width = 14
     ws.column_dimensions['B'].width = 40
     ws.column_dimensions['C'].width = 12
     ws.column_dimensions['D'].width = 20
@@ -122,12 +105,12 @@ def transform_price(input_path, output_path):
     # Удаляем первые 6 строк
     ws.delete_rows(1, 6)
     
-    # Добавляем изображения
-    for row_num, img in new_images:
-        new_row = row_num - 6 + 1
-        if new_row > 0:
-            img.anchor = f'A{new_row}'
-            ws.add_image(img)
+    # Корректируем позиции изображений
+    for img in ws._images:
+        if hasattr(img.anchor, '_from'):
+            anchor = img.anchor._from
+            if anchor.row >= 6:
+                anchor.row -= 6
     
     # Применяем высоты строк
     for old_row, height in original_row_heights.items():
@@ -196,4 +179,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-```
