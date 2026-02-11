@@ -1,3 +1,20 @@
+import os
+import logging
+import io
+from telegram import Update
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from openpyxl import load_workbook
+from openpyxl.styles import Alignment, Font
+from openpyxl.cell.cell import MergedCell
+from openpyxl.drawing.image import Image as XLImage
+from PIL import Image
+
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
 def transform_price(input_path, output_path):
     wb = load_workbook(input_path)
     ws = wb.active
@@ -9,6 +26,20 @@ def transform_price(input_path, output_path):
     for row in range(1, max_row + 1):
         if ws.row_dimensions[row].height:
             original_row_heights[row] = ws.row_dimensions[row].height
+    
+    # Сохраняем заголовки из строки 3
+    # После удаления столбцов останутся: 3(фото), 5(наим), 6(код), 7(страна), 11(штук), 12(годен), 22(вес), 23(объём)
+    original_headers = {
+        1: ws.cell(row=3, column=3).value or "Фото",
+        2: ws.cell(row=3, column=5).value or "Наименование", 
+        3: ws.cell(row=3, column=6).value or "Код",
+        4: ws.cell(row=3, column=7).value or "Страна",
+        5: ws.cell(row=3, column=11).value or "Штук в блоке",
+        6: ws.cell(row=3, column=12).value or "Годен до",
+        7: ws.cell(row=3, column=22).value or "Вес (кг)",
+        8: ws.cell(row=3, column=23).value or "Объём (м3)",
+        9: "Цены"
+    }
     
     # Сохраняем цены
     price_data = {}
@@ -71,7 +102,6 @@ def transform_price(input_path, output_path):
                     buf.seek(0)
                     
                     new_img = XLImage(buf)
-                    new_img.anchor = f'A{row_num + 1}'
                     new_images.append((row_num, new_img))
                 except:
                     pass
@@ -96,38 +126,98 @@ def transform_price(input_path, output_path):
     ws.column_dimensions['B'].width = 40
     ws.column_dimensions['C'].width = 12
     ws.column_dimensions['D'].width = 20
-    ws.column_dimensions['E'].width = 8
+    ws.column_dimensions['E'].width = 12
     ws.column_dimensions['F'].width = 11
-    ws.column_dimensions['G'].width = 8
+    ws.column_dimensions['G'].width = 10
     ws.column_dimensions['H'].width = 12
     ws.column_dimensions['I'].width = 18
     
-    # Удаляем первые 6 строк
+    # Удаляем первые 6 строк (контакты и старые заголовки)
     ws.delete_rows(1, 6)
     
-    # Добавляем изображения (со сдвигом +1 для заголовка)
+    # Вставляем новую строку для заголовков
+    ws.insert_rows(1)
+    
+    # Добавляем заголовки
+    for col, header in original_headers.items():
+        cell = ws.cell(row=1, column=col)
+        cell.value = header
+        cell.font = Font(bold=True)
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+    
+    ws.row_dimensions[1].height = 25
+    
+    # Добавляем изображения (сдвиг: -6 за удалённые строки, +1 за новый заголовок, +1 за 0-индекс)
     for row_num, img in new_images:
-        new_row = row_num - 6 + 2  # +2: один для сдвига, один для заголовка
+        new_row = row_num - 6 + 1 + 1
         if new_row > 1:
             img.anchor = f'A{new_row}'
             ws.add_image(img)
     
-    # Применяем высоты строк (со сдвигом +1 для заголовка)
+    # Применяем высоты строк
     for old_row, height in original_row_heights.items():
         new_row = old_row - 6 + 1
         if new_row > 1:
             ws.row_dimensions[new_row].height = height
     
-    # Вставляем строку заголовков
-    ws.insert_rows(1)
-    headers = ['Фото', 'Наименование', 'Код', 'Страна', 'Штук в блоке', 'Годен до', 'Вес', 'Объём', 'Цены']
-    for col, header in enumerate(headers, 1):
-        cell = ws.cell(row=1, column=col)
-        cell.value = header
-        cell.font = Font(bold=True)
-        cell.alignment = Alignment(horizontal='center')
-    
-    ws.row_dimensions[1].height = 20
-    
     wb.save(output_path)
     return {"success": True, "rows": ws.max_row, "images": len(ws._images)}
+
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "👋 Привет! Отправь мне Excel файл с прайсом.\n\n"
+        "Я обработаю его и верну с фото и ценами."
+    )
+
+
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    document = update.message.document
+    
+    if not document.file_name.endswith(('.xlsx', '.xls')):
+        await update.message.reply_text("❌ Отправь Excel файл (.xlsx)")
+        return
+    
+    await update.message.reply_text("⏳ Обрабатываю...")
+    
+    try:
+        file = await context.bot.get_file(document.file_id)
+        input_path = f"/tmp/input_{document.file_name}"
+        output_path = f"/tmp/telegram_{document.file_name}"
+        
+        await file.download_to_drive(input_path)
+        
+        result = transform_price(input_path, output_path)
+        
+        if result["success"]:
+            await update.message.reply_document(
+                document=open(output_path, 'rb'),
+                filename=f"telegram_{document.file_name}",
+                caption=f"✅ Готово! Строк: {result['rows']}, Фото: {result['images']}"
+            )
+        
+        if os.path.exists(input_path):
+            os.remove(input_path)
+        if os.path.exists(output_path):
+            os.remove(output_path)
+            
+    except Exception as e:
+        logger.error(f"Error: {e}")
+        await update.message.reply_text(f"❌ Ошибка: {str(e)}")
+
+
+def main():
+    if not BOT_TOKEN:
+        print("❌ BOT_TOKEN не установлен!")
+        return
+    
+    app = Application.builder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
+    
+    print("🤖 Бот запущен!")
+    app.run_polling(drop_pending_updates=True)
+
+
+if __name__ == '__main__':
+    main()
