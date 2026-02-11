@@ -196,10 +196,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-```
-
-**requirements.txt:**
-```
-python-telegram-bot==20.7
-openpyxl==3.1.2
-Pillow==10.1.0
